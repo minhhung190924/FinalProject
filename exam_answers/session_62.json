@@ -1,0 +1,17 @@
+{
+  "session_id": 62,
+  "candidate": "Hung",
+  "answers": {
+    "0": null,
+    "1": null,
+    "2": null,
+    "3": null,
+    "4": null
+  },
+  "submitted_at": "2026-11-24T15:44:19+07:00",
+  "elapsed_seconds": 423,
+  "allowed_seconds": 600,
+  "late": false,
+  "overtime_seconds": 0,
+  "recovered_after_disconnect": false
+}

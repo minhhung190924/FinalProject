@@ -1,0 +1,11 @@
+<link rel="stylesheet" href="{{ url_for('static', filename='teacher/login.css') }}">
+
+<form method="POST">
+  <h1>Đăng nhập giáo viên</h1>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if created %}<div class="ok">Tạo tài khoản thành công. Hãy đăng nhập.</div>{% endif %}
+  <input type="text" name="username" placeholder="Tên giáo viên / tên đăng nhập" autocomplete="username" autofocus required>
+  <input type="password" name="password" placeholder="Mật khẩu" autocomplete="current-password" required>
+  <button type="submit">Đăng nhập</button>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+</form>

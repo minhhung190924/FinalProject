@@ -1,0 +1,6 @@
+Flask>=3.0,<4.0
+numpy>=1.24,<2.0
+opencv-python>=4.8,<5.0
+mediapipe==0.10.21
+insightface==2.1
+onnxruntime>=1.17,<2.0

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đăng ký khuôn mặt</title>
+  <link rel="stylesheet" href="/static/student/style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <h1>Đăng ký khuôn mặt</h1>
+    <p>Hệ thống chỉ cần ghi nhận khuôn mặt khi bạn nhìn thẳng vào camera.</p>
+    <ol id="stepList"></ol>
+    <a class="back" href="/">&larr; Về trang chủ</a>
+  </aside>
+
+  <main class="stage">
+    <section id="nameStage" style="display:flex;flex-direction:column;gap:20px">
+      <h2>Nhập tên của bạn</h2>
+      <p class="lead">Tên này dùng để nhận diện bạn khi thi. Nên thêm mã số sinh viên để không trùng, ví dụ Hoang_Nam_2151.</p>
+      <div>
+        <label class="field" for="nameInput">Tên đăng ký</label>
+        <input id="nameInput" type="text" maxlength="50" autocomplete="off" placeholder="Hoang_Nam_2151">
+        <p class="error" id="nameError" hidden></p>
+      </div>
+      <button class="btn" id="startBtn">Bật camera và bắt đầu</button>
+    </section>
+
+    <section id="camStage" hidden style="display:flex;flex-direction:column;gap:16px">
+      <h2 id="prompt">Nhìn thẳng vào camera</h2>
+      <div class="viewport">
+        <video id="video" autoplay muted playsinline></video>
+        <div class="ring" id="ring" data-state="idle"></div>
+        <div class="hold" id="hold"></div>
+      </div>
+      <div class="status"><span class="dot" id="dot"></span><span id="msg">Đang mở camera...</span></div>
+      <div class="meta" id="meta"></div>
+    </section>
+
+    <section id="doneStage" hidden>
+      <div class="success">
+        <h3>Đăng ký thành công</h3>
+        <p style="margin:0 0 4px">Họ tên: <strong id="doneName"></strong></p>
+        <p style="margin:0">ID thí sinh: <strong id="doneId"></strong></p>
+      </div>
+      <p class="hint">Hãy ghi nhớ tên đăng ký. Khi vào thi, hệ thống tự nhận ra bạn qua khuôn mặt.</p>
+      <p><a class="btn" href="/exam">Vào thi ngay</a> &nbsp; <a class="btn secondary" href="/">Về trang chủ</a></p>
+    </section>
+    <canvas id="canvas" hidden></canvas>
+  </main>
+</div>
+
+<script src="/static/student/camera.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const HOLD_MS = 1500;   // giữ đúng tư thế bấy nhiêu ms thì tự chụp
+let token = null, steps = [], stepIdx = 0, stream = null, stopLoop = null, holdStart = null;
+
+function renderSteps() {
+  $("#stepList").innerHTML = "";
+  steps.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.textContent = s.prompt;
+    li.className = i < stepIdx ? "done" : i === stepIdx ? "current" : "";
+    $("#stepList").appendChild(li);
+  });
+}
+
+function setStatus(kind, text) {
+  $("#dot").className = "dot " + kind;
+  $("#msg").textContent = text;
+}
+
+$("#startBtn").onclick = async () => {
+  const err = $("#nameError");
+  err.hidden = true;
+  $("#startBtn").disabled = true;
+  const r = await postJSON("/api/register/start", { name: $("#nameInput").value });
+  if (!r.ok) {
+    err.textContent = r.message || "Không bắt đầu được.";
+    err.hidden = false;
+    $("#startBtn").disabled = false;
+    return;
+  }
+  token = r.token; steps = r.steps; stepIdx = 0;
+  $("#nameStage").hidden = true;
+  $("#camStage").hidden = false;
+  renderSteps();
+  try {
+    stream = await startCamera($("#video"));
+  } catch (e) {
+    $("#camStage").hidden = true;
+    $("#nameStage").hidden = false;
+    err.textContent = cameraErrorMessage(e);
+    err.hidden = false;
+    $("#startBtn").disabled = false;
+    return;
+  }
+  stopLoop = frameLoop(sendFrame, 250);
+};
+$("#nameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#startBtn").click(); });
+
+async function sendFrame() {
+  const wantCapture = holdStart !== null && Date.now() - holdStart >= HOLD_MS;
+  const r = await postJSON("/api/register/frame", { token, image: grabFrame($("#video"), $("#canvas")), capture: wantCapture });
+  if (r._http === 404) { stopLoop(); setStatus("bad", r.message); return; }
+  if (!r.ok) { setStatus("bad", r.message || "Có lỗi xảy ra."); return; }
+
+  if (r.captured) {
+    holdStart = null;
+    stepIdx = r.step;
+    $("#hold").style.width = "0";
+    if (r.done) { finish(r); return; }
+    renderSteps();
+    $("#prompt").textContent = steps[stepIdx].prompt;
+    setStatus("ok", "Đã ghi nhận khuôn mặt. Đang hoàn tất đăng ký...");
+    return;
+  }
+  if (r.angle_ok) {
+    if (holdStart === null) holdStart = Date.now();
+  } else {
+    holdStart = null;
+  }
+  const held = holdStart === null ? 0 : Math.min(100, ((Date.now() - holdStart) / HOLD_MS) * 100);
+  $("#hold").style.width = held + "%";
+  $("#ring").dataset.state = r.angle_ok ? "ok" : "idle";
+  setStatus(r.angle_ok ? "ok" : "warn", r.message);
+  $("#meta").textContent = "Góc lệch ngang " + r.dyaw + " | dọc " + r.dpitch;
+}
+
+function finish(r) {
+  stopLoop();
+  stopStream(stream);
+  $("#camStage").hidden = true;
+  $("#doneStage").hidden = false;
+  $("#doneName").textContent = r.name;
+  $("#doneId").textContent = r.candidate_id;
+  stepIdx = steps.length;
+  renderSteps();
+}
+</script>
+</body>
+</html>

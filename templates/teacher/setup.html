@@ -1,0 +1,12 @@
+<link rel="stylesheet" href="{{ url_for('static', filename='teacher/setup.css') }}">
+
+<form method="POST">
+  <h1>Tạo tài khoản giáo viên</h1>
+  <p>Đặt tên đăng nhập và mật khẩu để sử dụng trang quản lý kết quả thi.</p>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="text" name="username" placeholder="Tên giáo viên / tên đăng nhập" minlength="3" maxlength="50" autocomplete="username" autofocus required>
+  <input type="password" name="password" placeholder="Mật khẩu (ít nhất 8 ký tự)" minlength="8" autocomplete="new-password" required>
+  <input type="password" name="confirm_password" placeholder="Nhập lại mật khẩu" minlength="8" autocomplete="new-password" required>
+  <button type="submit">Tạo tài khoản</button>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+</form>

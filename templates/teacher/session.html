@@ -1,0 +1,88 @@
+{% include "teacher/_head.html" %}
+
+<header>
+  <a class="logout" href="/logout">Đăng xuất</a>
+  <div class="menu-wrap">
+    <button type="button" class="menu-toggle" onclick="toggleMainMenu(this)" aria-label="Mở menu điều hướng" aria-expanded="false" aria-haspopup="true"><span></span><span></span><span></span></button>
+    <div class="menu-overlay" id="mainMenuOverlay" hidden>
+      <nav class="menu-panel" aria-label="Menu điều hướng">
+        <div class="menu-panel-header">
+          <span class="menu-panel-title">Menu</span>
+          <button type="button" class="menu-close" onclick="closeMainMenu()" aria-label="Đóng menu">&times;</button>
+        </div>
+        <a href="/">Dashboard</a>
+        <a href="/audit">Nhật ký hoạt động</a>
+      </nav>
+    </div>
+  </div>
+  <h1 style="display:inline; font-size:16px; margin-left:8px;">Session #{{ session.id }} - {{ session.full_name }}</h1>
+</header>
+<div class="container">
+  <section style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px;margin-bottom:22px;">
+    <h2 style="margin-top:0;">Bài làm và kết quả của thí sinh</h2>
+    {% if exam_review %}
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 18px;">
+        <span class="badge {% if exam_review.submitted %}badge-ok{% else %}badge-warning{% endif %}">
+          {{ 'Đã nộp bài' if exam_review.submitted else 'Bản nháp tự lưu - chưa nộp' }}
+        </span>
+        <span class="badge badge-ok">{{ exam_review.correct_count }}/{{ exam_review.total }} câu đúng</span>
+        <span class="badge badge-neutral">Điểm: {{ exam_review.score_percent }}%</span>
+        <span class="badge badge-neutral">Đã trả lời: {{ exam_review.answered_count }}/{{ exam_review.total }}</span>
+        {% if exam_review.late %}<span class="badge badge-danger">Nộp trễ</span>{% endif %}
+      </div>
+      {% if exam_review.submitted_at %}<p style="color:#64748b;font-size:13px;">Thời điểm nộp/lưu: {{ exam_review.submitted_at|datetime_display }}</p>{% endif %}
+      {% for q in exam_review.questions %}
+        <article style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin:12px 0;">
+          <h3 style="margin:0 0 10px;font-size:15px;">Câu {{ q.number }}. {{ q.question }}</h3>
+          <div style="display:grid;gap:7px;">
+            {% for option in q.options %}
+              {% set option_index = loop.index0 %}
+              <div style="padding:8px 10px;border-radius:6px;background:{% if option_index == q.correct %}#dcfce7{% elif option_index == q.selected and not q.is_correct %}#fee2e2{% else %}#f8fafc{% endif %};color:#1e293b;">
+                {{ ['A','B','C','D'][option_index] }}. {{ option }}
+                {% if option_index == q.selected %}<strong> — Thí sinh chọn</strong>{% endif %}
+                {% if option_index == q.correct %}<strong> — Đáp án đúng</strong>{% endif %}
+              </div>
+            {% endfor %}
+          </div>
+          <p style="margin:9px 0 0;font-weight:600;color:{% if q.is_correct %}#15803d{% elif q.selected is none %}#64748b{% else %}#b91c1c{% endif %};">
+            {% if q.is_correct %}Trả lời đúng{% elif q.selected is none %}Chưa trả lời{% else %}Trả lời sai{% endif %}
+          </p>
+        </article>
+      {% endfor %}
+      <p style="font-size:12px;color:#64748b;">Lưu ý: kết quả được chấm theo đáp án cấu hình hiện tại của đề thi mẫu. Nếu bạn thay đổi đề hoặc đáp án, cần cập nhật đáp án tương ứng trong dashboard.</p>
+    {% else %}
+      <div class="empty">Chưa tìm thấy file bài làm cho phiên thi này. Phiên cũ được tạo trước khi bật chức năng lưu bài hoặc dữ liệu bài làm có thể không còn.</div>
+    {% endif %}
+  </section>
+
+  <h2>Lịch sử cảnh báo và vi phạm ({{ violations|length }})</h2>
+  {% if violations %}
+  <table>
+    <tr><th>Thời gian</th><th>Mức độ</th><th>Loại sự kiện</th><th>Nội dung</th><th>Ảnh bằng chứng</th></tr>
+    {% for v in violations %}
+    <tr>
+      <td>{{ v.created_at|datetime_display }}</td>
+      <td>{% if v.severity == 'warning' %}<span class="badge badge-warning">Cảnh báo</span>{% else %}<span class="badge badge-danger">Vi phạm</span>{% endif %}</td>
+      <td>{{ v.violation_type }}</td>
+      <td>{{ v.message }}</td>
+      <td>
+        {% if v.evidence_path %}
+          <img class="thumb zoomable" style="width:80px;height:60px;" src="/evidence/{{ v.id }}" onclick="lbShow({{ v.ev_idx }})" title="Bấm để xem lớn">
+        {% else %}-{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">Không có vi phạm nào trong phiên thi này.</div>
+  {% endif %}
+</div>
+
+<div class="lb" id="lb" hidden onclick="if (event.target === this) lbClose()">
+  <button class="lb-x" onclick="lbClose()" title="Đóng (Esc)">&times;</button>
+  <button class="lb-prev" onclick="lbMove(-1)" title="Ảnh trước (←)">&lsaquo;</button>
+  <figure><img id="lbImg" alt="Ảnh bằng chứng"><figcaption id="lbCap"></figcaption></figure>
+  <button class="lb-next" onclick="lbMove(1)" title="Ảnh sau (→)">&rsaquo;</button>
+</div>
+<script>var EV = {{ evidence|tojson }};</script>
+<script src="{{ url_for('static', filename='teacher/lightbox.js') }}"></script>

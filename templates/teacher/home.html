@@ -1,0 +1,104 @@
+{% include "teacher/_head.html" %}
+
+<header>
+  <a class="logout" href="/logout">Đăng xuất</a>
+  <div class="menu-wrap">
+    <button type="button" class="menu-toggle" onclick="toggleMainMenu(this)" aria-label="Mở menu điều hướng" aria-expanded="false" aria-haspopup="true">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="menu-overlay" id="mainMenuOverlay" hidden>
+      <nav class="menu-panel" aria-label="Menu điều hướng">
+        <div class="menu-panel-header">
+          <span class="menu-panel-title">Menu</span>
+          <button type="button" class="menu-close" onclick="closeMainMenu()" aria-label="Đóng menu">&times;</button>
+        </div>
+        <a href="/">Dashboard</a>
+        <a href="/audit">Nhật ký hoạt động</a>
+      </nav>
+    </div>
+  </div>
+  <h1>Exam Proctoring - Data Dashboard</h1>
+</header>
+<div class="container">
+  {% if message %}<div class="flash">{{ message }}</div>{% endif %}
+  {% if error %}<div class="flash" style="background:#fee2e2;color:#b91c1c;">{{ error }}</div>{% endif %}
+  <form class="filters" method="GET" action="/">
+    <label>Tìm theo tên<input type="text" name="q" value="{{ f.q }}" placeholder="Nhập tên thí sinh"></label>
+    <label>Trạng thái phiên
+      <select name="status">
+        <option value="">Tất cả</option>
+        {% for key, label in [('completed','Đã nộp bài'),('aborted','Bỏ giữa chừng'),('active','Đang thi')] %}
+        <option value="{{ key }}" {{ 'selected' if f.status == key else '' }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Từ ngày<input type="date" name="date_from" value="{{ f.date_from }}"></label>
+    <label>Đến ngày<input type="date" name="date_to" value="{{ f.date_to }}"></label>
+    <label class="chk"><input type="checkbox" name="only_violations" value="1" {{ 'checked' if f.only_violations else '' }}>Chỉ phiên có vi phạm</label>
+    <button type="submit">Lọc</button>
+    <a class="reset" href="/">Xóa lọc</a>
+  </form>
+  <h2>Danh sách thí sinh đã đăng ký ({{ candidates|length }}{% if total_candidates != candidates|length %} / {{ total_candidates }}{% endif %})</h2>
+  {% if candidates %}
+  <table>
+    <tr><th>Ảnh</th><th>ID</th><th>Họ tên</th><th>Ngày đăng ký</th><th>Số ảnh mẫu</th><th></th><th></th></tr>
+    {% for c in candidates %}
+    <tr>
+      <td><img class="thumb" src="/photo/{{ c.full_name }}/0"></td>
+      <td>{{ c.id }}</td>
+      <td>{{ c.full_name }}</td>
+      <td>{{ c.registered_at|datetime_display }}</td>
+      <td>{{ c.n_photos }}</td>
+      <td><a class="link" href="/candidate/{{ c.id }}">Xem ảnh &rarr;</a></td>
+      <td>
+        <form method="POST" action="/candidate/{{ c.id }}/delete"
+              onsubmit="return confirm('Xóa vĩnh viễn thí sinh {{ c.full_name }} cùng toàn bộ dữ liệu liên quan?');">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="btn-delete" {% if c.has_live %}disabled title="Thí sinh đang có phiên thi, không thể xóa" style="opacity:.45;cursor:not-allowed"{% endif %}>Xóa</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">{{ 'Không có thí sinh nào khớp bộ lọc.' if total_candidates else 'Chưa có thí sinh nào. Hãy chạy 1_register_candidate.py trước.' }}</div>
+  {% endif %}
+
+  <h2>Lịch sử phiên thi ({{ sessions|length }}{% if total_sessions != sessions|length %} / {{ total_sessions }}{% endif %})</h2>
+  {% if sessions %}
+  <table>
+    <tr><th>Session</th><th>Thí sinh</th><th>Bắt đầu</th><th>Kết thúc</th><th>Trạng thái</th><th>Vi phạm</th><th>Cảnh báo</th><th></th><th></th></tr>
+    {% for s in sessions %}
+    <tr>
+      <td>#{{ s.id }}</td>
+      <td>{{ s.full_name }}</td>
+      <td>{{ s.started_at|datetime_display }}</td>
+      <td>{{ s.ended_at|datetime_display if s.ended_at else '-' }}</td>
+      <td>
+        {% if s.status == 'completed' %}<span class="badge badge-ok">completed</span>
+        {% elif s.status == 'aborted' %}<span class="badge badge-neutral">aborted</span>
+        {% else %}<span class="badge badge-warning">{{ s.status }}</span>{% endif %}
+      </td>
+      <td>
+        {% if s.n_violations == 0 %}<span class="badge badge-ok">0</span>
+        {% else %}<span class="badge badge-danger">{{ s.n_violations }}</span>{% endif %}
+      </td>
+      <td>
+        {% if s.n_warnings == 0 %}<span class="badge badge-ok">0</span>
+        {% else %}<span class="badge badge-warning">{{ s.n_warnings }}</span>{% endif %}
+      </td>
+      <td><a class="link" href="/session/{{ s.id }}">Chi tiết &rarr;</a></td>
+      <td>
+        <form method="POST" action="/session/{{ s.id }}/delete"
+              onsubmit="return confirm('Xóa vĩnh viễn session #{{ s.id }} cùng toàn bộ vi phạm/ảnh liên quan?');">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="btn-delete" {% if s.live %}disabled title="Phiên đang thi, không thể xóa" style="opacity:.45;cursor:not-allowed"{% endif %}>Xóa</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">{{ 'Không có phiên thi nào khớp bộ lọc.' if total_sessions else 'Chưa có phiên thi nào.' }}</div>
+  {% endif %}
+</div>

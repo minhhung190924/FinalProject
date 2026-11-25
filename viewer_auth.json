@@ -1,0 +1,5 @@
+{
+  "secret_key": "33ed09995b2862633ebb0870574b012e2b84050d61014e2c9c1634d58957cd34",
+  "password_hash": "scrypt:32768:8:1$t4xzDdA98KLGXhdy$73eb952ab77111c5be3f75b8386d046af78e82dd6dd45b5da349ce2b7e42d09a24d683eae3364f58b7db7023cb091931f4b2f4c14f457af6f95f44600633ed1c",
+  "username": "Hung"
+}

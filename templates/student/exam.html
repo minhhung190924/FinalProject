@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vào thi</title>
+  <link rel="stylesheet" href="/static/student/style.css">
+</head>
+<body>
+<video id="cam" class="cam-offscreen" autoplay muted playsinline></video>
+<canvas id="canvas" hidden></canvas>
+
+<div class="shell" id="verify">
+  <aside class="rail">
+    <h1>Vào thi</h1><p>Camera giám sát suốt buổi thi.</p>
+    <ol><li class="done">Cho phép camera</li><li class="current">Xác thực khuôn mặt</li><li>Làm bài và nộp bài</li></ol>
+    <a class="back" href="/">&larr; Về trang chủ</a>
+  </aside>
+  <main class="stage">
+    <h2>Xác thực khuôn mặt</h2>
+    <p class="lead">Ngồi vào giữa khung hình, nhìn thẳng vào camera. Hệ thống tự nhận ra bạn.</p>
+    <div class="viewport"><video id="previewA" autoplay muted playsinline></video><div class="ring" id="ringA" data-state="idle"></div></div>
+    <div class="status"><span class="dot" id="dotA"></span><span id="msgA">Đang mở camera...</span></div>
+    <div id="verifyBar" style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;margin:6px 0 10px"><div id="verifyFill" style="height:100%;width:0;background:#16a34a;transition:width .25s"></div></div>
+    <div class="meta" id="metaA"></div><p class="error" id="fatalA" hidden></p>
+    <div><p class="hint" style="margin-bottom:6px"><strong>Quy định trong khi thi</strong></p>
+      <ul class="rules"><li>Bài thi chạy toàn màn hình. Thoát toàn màn hình hoặc chuyển tab sẽ bị ghi lại.</li><li>Nhìn vào màn hình, không quay mặt đi lâu và không để người khác vào khung hình.</li><li>Không sao chép, dán nội dung.</li></ul>
+    </div>
+    <p class="hint" style="margin-bottom:6px">Khi bấm "Bắt đầu làm bài", hãy nhìn vào màn hình như lúc làm bài. Hệ thống lấy tư thế này làm chuẩn để phát hiện quay đầu.</p>
+    <button class="btn" id="beginBtn" disabled>Bắt đầu làm bài</button>
+  </main>
+</div>
+
+<div class="exam-shell" id="exam" hidden>
+  <header class="exam-top"><strong id="examTitle">Bài thi</strong><span class="timer" id="timer">--:--</span><button class="btn secondary" id="submitBtn" style="padding:8px 16px">Nộp bài</button></header>
+  <div class="exam-body"><div id="questions"></div><aside>
+    <div class="viewport small"><video id="previewB" autoplay muted playsinline></video><div class="ring" id="ringB" data-state="idle"></div></div>
+    <div class="banner" id="banner">Đang làm bài bình thường.</div><div class="meta" id="metaB"></div>
+  </aside></div>
+</div>
+
+<div class="shell" id="done" hidden>
+  <aside class="rail"><h1>Hoàn tất</h1><p>Bài thi đã được ghi nhận.</p><ol><li class="done">Cho phép camera</li><li class="done">Xác thực khuôn mặt</li><li class="done">Làm bài và nộp bài</li></ol></aside>
+  <main class="stage"><h2>Bạn đã nộp bài</h2><div class="success"><h3>Nộp bài thành công</h3><p style="margin:0">Camera đã tắt. Bạn có thể đóng trang này.</p></div><p><a class="btn secondary" href="/">Về trang chủ</a></p></main>
+</div>
+
+<div class="overlay" id="fsOverlay" hidden><div><h2 style="margin:0">Bạn đã thoát toàn màn hình</h2><p style="margin:0">Việc này đã được ghi lại. Bấm nút bên dưới để quay lại làm bài.</p><button class="btn" id="fsBtn">Quay lại toàn màn hình</button></div></div>
+
+<script src="/static/student/camera.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let token = null, stream = null, stopLoop = null;
+let examDurationMs = 0, calibStartedAt = 0;
+let started = false, finished = false, submitting = false, endAt = 0, timerId = null, questionCount = 0;
+let confirmTimer = null;
+
+async function init() {
+  try { stream = await startCamera($("#cam")); }
+  catch (e) { showFatal(cameraErrorMessage(e)); return; }
+  $("#previewA").srcObject = stream;
+  $("#previewB").srcObject = stream;
+  const r = await postJSON("/api/exam/start", {});
+  if (!r.ok) { showFatal(r.message || "Không bắt đầu được phiên thi."); return; }
+  token = r.token;
+  $("#dotA").className = "dot warn";
+  $("#msgA").textContent = "Đang khởi động bộ nhận diện khuôn mặt...";
+  stopLoop = frameLoop(sendFrame, 120);
+}
+
+function showConnLost() {
+  const text = "Mất kết nối tới máy chủ. Đang thử lại...";
+  if (started) { $("#banner").className = "banner warn"; $("#banner").textContent = text; }
+  else { $("#dotA").className = "dot bad"; $("#msgA").textContent = text; $("#verifyFill").style.width = "0"; }
+}
+
+function showFatal(text) {
+  $("#dotA").className = "dot bad";
+  $("#msgA").textContent = "Không thể tiếp tục";
+  $("#fatalA").textContent = text;
+  $("#fatalA").hidden = false;
+}
+
+// Báo lỗi trong lúc thi NHƯNG vẫn cho bấm nộp bài (khác showExamFatal: nút nộp bị khóa).
+function showExamError(text) {
+  $("#banner").className = "banner bad";
+  $("#banner").textContent = text;
+}
+
+function showExamFatal(text) {
+  // Khi đang thi, #verify đã hidden nên phải hiển thị lỗi ngay trong màn hình thi.
+  $("#banner").className = "banner bad";
+  $("#banner").textContent = text;
+  $("#submitBtn").disabled = true;
+}
+
+let frameSending = false, failStreak = 0;
+async function sendFrame() {
+  if (frameSending || !token || finished) return;
+  frameSending = true;
+  try {
+    // Timeout ngắn (4s) cho frame giám sát: nếu server treo thì vòng lặp không bị kẹt 10s.
+    const r = await postJSON("/api/exam/frame", { token, image: grabFrame($("#cam"), $("#canvas")) }, 4000);
+    if (r._http === 410 || r._http === 404) {
+      if (stopLoop) stopLoop();
+      if (!finished) {
+        const message = r.message || "Phiên thi đã kết thúc. Hãy tải lại trang để xác thực lại.";
+        if (started) {
+          // Giám sát bị ngắt (mất kết nối quá lâu...): không khóa bài, thí sinh vẫn nộp được phần đã làm.
+          stopAutosave();
+          showExamError("Phiên giám sát đã bị ngắt. Bài làm của bạn vẫn còn - hãy bấm Nộp bài để nộp phần đã làm.");
+        } else showFatal(message);
+      }
+      return;
+    }
+    if (!r.ok) {
+      if (r._http === 0) {
+        console.warn("Không nhận được phản hồi từ server:", r.message);
+        failStreak++;
+        if (failStreak >= 4) showConnLost();
+      }
+      return;
+    }
+    failStreak = 0;
+    render(r);
+  } catch (e) { console.error("Lỗi gửi khung hình:", e); }
+  finally { frameSending = false; }
+}
+
+// ---- Làm mượt số đo hiển thị: số chạy theo từng bước nhỏ tới giá trị mới thay vì nhảy cóc ----
+const disp = { yaw: 0, pitch: 0, roll: 0 };
+let target = { yaw: 0, pitch: 0, roll: 0 }, lastMetaRender = null;
+function easeLoop() {
+  for (const k of ["yaw", "pitch", "roll"]) disp[k] += (target[k] - disp[k]) * 0.35;
+  if (lastMetaRender) lastMetaRender();
+  requestAnimationFrame(easeLoop);
+}
+requestAnimationFrame(easeLoop);
+
+let lastR = null;
+function buildMeta(r) {
+  return "Số khuôn mặt " + r.face_count + " | Lệch ngang (+trái/-phải) " + disp.yaw.toFixed(1) + " dọc " + disp.pitch.toFixed(1) + (r.roll != null ? " nghiêng " + disp.roll.toFixed(1) : "") +
+    " | Mắt " + r.gaze_h + "/" + r.gaze_v + (r.distance !== null && r.distance !== undefined ? " | Khoảng cách khớp " + r.distance : "") +
+    (r.processing_ms != null ? " | Xử lý " + r.processing_ms + "ms" : "");
+}
+
+function render(r) {
+  target = { yaw: +r.yaw || 0, pitch: +r.pitch || 0, roll: +r.roll || 0 };
+  const kind = r.status === 2 ? "bad" : r.status === 1 ? "warn" : "ok";
+  lastR = r;
+  lastMetaRender = () => { const m = buildMeta(lastR); $(started ? "#metaB" : "#metaA").textContent = m; };
+  const meta = buildMeta(r);
+  if (!started) {
+    $("#ringA").dataset.state = r.identified ? "ok" : (r.face_count > 0 ? "warn" : "idle");
+    $("#dotA").className = "dot " + (r.identified ? "ok" : "warn");
+    $("#msgA").textContent = r.identified ? "Xin chào " + r.name + ". " + r.message : r.message;
+    $("#verifyFill").style.width = Math.round((r.verify_progress || 0) * 100) + "%";
+    $("#metaA").textContent = meta;
+    $("#beginBtn").disabled = !(r.identified && r.face_count === 1 && r.straight_ok);
+    return;
+  }
+  startTimerIfReady(r);
+  $("#ringB").dataset.state = kind;
+  $("#banner").className = "banner" + (kind === "ok" ? "" : " " + kind);
+  $("#banner").textContent = r.message;
+  $("#metaB").textContent = meta;
+}
+
+$("#beginBtn").onclick = async () => {
+  $("#beginBtn").disabled = true;
+  try { await document.documentElement.requestFullscreen(); } catch (e) { /* trình duyệt có thể từ chối fullscreen */ }
+  const r = await postJSON("/api/exam/begin", { token });
+  if (!r.ok) {
+    if (r.retry) { $("#msgA").textContent = r.message; return; }   // chưa thẳng: giữ nguyên trang, cho thử lại
+    showFatal(r.message || "Không bắt đầu được bài thi."); return;
+  }
+  buildQuestions(r.questions);
+  $("#examTitle").textContent = r.title + " - " + r.name;
+  // Mốc nhìn thẳng đã đo xong từ trước khi bấm Bắt đầu nên đồng hồ chạy ngay.
+  examDurationMs = r.duration_minutes * 60 * 1000;
+  endAt = Date.now() + examDurationMs;
+  timerId = setInterval(tickTimer, 500);
+  tickTimer();
+  started = true;
+  startAutosave();
+  $("#verify").hidden = true;
+  $("#exam").hidden = false;
+  window.scrollTo(0, 0);
+};
+
+function buildQuestions(list) {
+  questionCount = list.length;
+  const box = $("#questions"); box.innerHTML = "";
+  list.forEach((q, i) => {
+    const wrap = document.createElement("div"); wrap.className = "question";
+    const h = document.createElement("h3"); h.textContent = "Câu " + (i + 1) + ". " + q.q; wrap.appendChild(h);
+    q.options.forEach((opt, j) => {
+      const label = document.createElement("label"); const input = document.createElement("input");
+      input.type = "radio"; input.name = "q" + i; input.value = j;
+      label.appendChild(input); label.appendChild(document.createTextNode(opt)); wrap.appendChild(label);
+    });
+    box.appendChild(wrap);
+  });
+}
+
+function startTimerIfReady(r) {
+  if (endAt || !examDurationMs) return;
+  // Sẵn sàng khi đã có mốc nhìn thẳng; dự phòng: sau 15 giây vẫn chưa có thì cứ bắt đầu để không kẹt.
+  if (r.baseline_ready || Date.now() - calibStartedAt > 15000) {
+    endAt = Date.now() + examDurationMs;
+    timerId = setInterval(tickTimer, 500);
+    $("#questions").hidden = false;
+    tickTimer();
+  }
+}
+
+function tickTimer() {
+  if (!endAt) return;
+  const left = Math.max(0, endAt - Date.now());
+  const m = String(Math.floor(left / 60000)).padStart(2, "0");
+  const s = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+  $("#timer").textContent = m + ":" + s;
+  if (left === 0 && !finished) submitExam();
+}
+
+$("#submitBtn").onclick = () => {
+  if ($("#submitBtn").dataset.armed === "1") { submitExam(); return; }
+  $("#submitBtn").dataset.armed = "1";
+  $("#submitBtn").textContent = "Bấm lần nữa để nộp bài";
+  confirmTimer = setTimeout(() => {
+    $("#submitBtn").dataset.armed = "0";
+    $("#submitBtn").textContent = "Nộp bài";
+  }, 4000);
+};
+
+function collectAnswers() {
+  const answers = {};
+  for (let i = 0; i < questionCount; i++) {
+    const picked = document.querySelector('input[name="q' + i + '"]:checked');
+    answers[i] = picked ? Number(picked.value) : null;
+  }
+  return answers;
+}
+
+// Tự lưu đáp án lên máy chủ: định kỳ 15 giây + 2 giây sau mỗi lần đổi đáp án.
+let autosaveTimer = null, autosaveDebounce = null;
+async function autosave() {
+  if (!token || finished || submitting) return;
+  try { await postJSON("/api/exam/save", { token, answers: collectAnswers() }, 4000); } catch (e) { /* thử lại ở lần sau */ }
+}
+function startAutosave() {
+  stopAutosave();
+  autosaveTimer = setInterval(autosave, 15000);
+  $("#questions").addEventListener("change", scheduleAutosave);
+}
+function scheduleAutosave() {
+  clearTimeout(autosaveDebounce);
+  autosaveDebounce = setTimeout(autosave, 2000);
+}
+function stopAutosave() {
+  clearInterval(autosaveTimer); clearTimeout(autosaveDebounce);
+  const q = $("#questions"); if (q) q.removeEventListener("change", scheduleAutosave);
+}
+
+async function submitExam() {
+  if (finished || submitting) return;
+  submitting = true;
+  $("#submitBtn").disabled = true;
+  clearTimeout(confirmTimer);
+  clearInterval(timerId);
+  stopAutosave();
+  const answers = collectAnswers();
+  const r = await postJSON("/api/exam/finish", { token, answers });
+  if (!r.ok) {
+    submitting = false;
+    $("#submitBtn").disabled = false;
+    $("#submitBtn").dataset.armed = "0";
+    $("#submitBtn").textContent = "Thử nộp bài lại";
+    showExamError(r.message || (r._http === 0
+      ? "Không kết nối được máy chủ. Bài thi chưa được xác nhận đã nộp. Hãy thử lại."
+      : "Máy chủ chưa xác nhận nộp bài thành công. Hãy thử lại."));
+    return;
+  }
+  finished = true;
+  submitting = false;
+  if (stopLoop) stopLoop();
+  stopStream(stream);
+  leaveFullscreen();
+  $("#fsOverlay").hidden = true;
+  $("#exam").hidden = true;
+  $("#done").hidden = false;
+}
+
+function leaveFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+
+function report(type) {
+  if (started && !finished) postJSON("/api/exam/event", { token, type });
+}
+document.addEventListener("visibilitychange", () => { if (document.hidden) report("TAB_SWITCH"); });
+window.addEventListener("blur", () => {
+  setTimeout(() => { if (!document.hidden && !document.hasFocus()) report("WINDOW_BLUR"); }, 300);
+});
+document.addEventListener("fullscreenchange", () => {
+  if (started && !finished && !document.fullscreenElement) {
+    report("FULLSCREEN_EXIT"); $("#fsOverlay").hidden = false;
+  }
+});
+$("#fsBtn").onclick = async () => {
+  try { await document.documentElement.requestFullscreen(); } catch (e) {}
+  $("#fsOverlay").hidden = true;
+};
+["copy", "cut", "paste"].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); report("COPY_PASTE"); }));
+document.addEventListener("contextmenu", (e) => { if (started) e.preventDefault(); });
+window.addEventListener("pagehide", () => {
+  if (token && !finished) navigator.sendBeacon("/api/exam/abort", new Blob([JSON.stringify({ token })], { type: "application/json" }));
+});
+init();
+</script>
+</body>
+</html>
